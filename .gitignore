@@ -57,3 +57,4 @@ GoogleService-Info.plist
 *.keystore
 *.jks
 android/key.properties
+lib/firebase_options.dart
