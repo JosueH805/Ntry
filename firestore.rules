@@ -1,0 +1,167 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper functions ─────────────────────────────────────────────────────
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // The M5Stack authenticates via Firebase email/password.
+    // Its email is defined in ntry_edge/src/secrets.h (DEVICE_EMAIL).
+    function isDevice() {
+      return isSignedIn() && request.auth.token.email == 'm5stack@ntry-device.local';
+    }
+
+    // Read the requesting user's Firestore profile.
+    // Firestore caches get() results within a single rule evaluation.
+    function userData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && userData().role == 'admin';
+    }
+
+    function isResident() {
+      return isSignedIn() && userData().role == 'resident';
+    }
+
+    function userOrg() {
+      return userData().organization;
+    }
+
+    function userLockId() {
+      return userData().lock_id;
+    }
+
+    // ── users/{uid} ──────────────────────────────────────────────────────────
+    match /users/{uid} {
+      // Owner reads their own doc. Admin reads any user (org-scoped in app code).
+      allow get: if isSignedIn() && (
+        request.auth.uid == uid || isAdmin()
+      );
+
+      // Admin list queries (streamUsersByOrg / getUsersByOrg).
+      allow list: if isAdmin();
+
+      // New users create their own profile during onboarding.
+      allow create: if isSignedIn() && request.auth.uid == uid;
+
+      // Owner may update only their display name fields.
+      allow update: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['first_name', 'last_name']);
+
+      // Admin may update anything: role, approvalStatus, lock_id, etc.
+      allow update: if isAdmin();
+
+      // Documents are never deleted — deactivate via approvalStatus instead.
+      allow delete: if false;
+    }
+
+    // ── locks/{lockId} ───────────────────────────────────────────────────────
+    match /locks/{lockId} {
+      // Single-doc reads: authenticated users whose org matches the lock's org.
+      allow get: if isSignedIn() && userOrg() == resource.data.organization;
+
+      // List reads (streamByOrg / getByOrg / getByIds): require auth.
+      // Org scoping is enforced by application-level queries.
+      allow list: if isSignedIn();
+
+      // Admins create/delete lock documents.
+      allow create: if isAdmin();
+      allow delete: if isAdmin();
+
+      // Admin can update any field; resident can update only the unlock-state
+      // fields that the app writes during the manual-unlock flow.
+      allow update: if isAdmin();
+      allow update: if isResident()
+        && userLockId() == lockId
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['unlocked', 'last_unlocked', 'status']);
+
+      // ── pendingCommands subcollection ────────────────────────────────────
+      // Currently the firmware uses RTDB (not this path), but rules are in
+      // place for when NTRY-56 / NTRY-65 migrates back to Firestore.
+      match /pendingCommands/{commandId} {
+        allow read: if isSignedIn() && (
+          isAdmin() || (isResident() && userLockId() == lockId)
+        );
+
+        allow create: if isSignedIn() && (
+          isAdmin() || (isResident() && userLockId() == lockId)
+        );
+
+        // Device deletes commands after execution.
+        allow delete: if isDevice();
+
+        // Commands are consumed by deletion — updates are never needed.
+        allow update: if false;
+      }
+    }
+
+    // ── passkeys/{passId} ────────────────────────────────────────────────────
+    // Top-level collection for guest passes (GuestHelper / PasskeyHelper).
+    // Fields: lockId, passkey, name, initTime, expTime, revoked, duration, expiresAt
+    match /passkeys/{passId} {
+      // Unauthenticated guests enter their PIN on GuestCodeScreen, which queries
+      // this collection by passkey code. Until NTRY-65 moves this lookup to a
+      // Cloud Function, we must allow unauthenticated reads here.
+      // TODO(NTRY-65): remove this when passkey lookup moves to Cloud Function.
+      allow get:  if true;
+      allow list: if true;
+
+      // Residents may create passes for their own lock.
+      allow create: if isSignedIn() && (
+        isAdmin() ||
+        (isResident() && request.resource.data.lockId == userLockId())
+      );
+
+      // Residents may revoke (update) passes for their own lock; admins can update any.
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        (isResident() && resource.data.lockId == userLockId())
+      );
+
+      // Only admins can hard-delete passes; residents use revoked: true instead.
+      allow delete: if isAdmin();
+    }
+
+    // ── locations/{locationId} ───────────────────────────────────────────────
+    match /locations/{locationId} {
+      // Single-doc: org must match.
+      allow get: if isSignedIn() && userOrg() == resource.data.organization;
+
+      // List (streamByOrg / getByOrg): require auth; org filter is in app code.
+      allow list: if isSignedIn();
+
+      allow write: if isAdmin();
+    }
+
+    // ── access_logs/{logId} ──────────────────────────────────────────────────
+    // Append-only audit log. Created by the mobile app and by the M5Stack (BLE
+    // path). Patched by the M5Stack to mark commands as executed.
+    match /access_logs/{logId} {
+      // Admins read all logs; residents read logs for their own lock.
+      allow get: if isSignedIn() && (
+        isAdmin() ||
+        (isResident() && resource.data.lock_id == userLockId())
+      );
+
+      // List queries (streamByLock / streamByOrg): require auth.
+      allow list: if isSignedIn();
+
+      // Mobile app (resident/admin) and device create new log entries.
+      allow create: if isSignedIn() && (isAdmin() || isResident() || isDevice());
+
+      // Device may only update the `status` field (pending → executed).
+      allow update: if isDevice()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+
+      // Logs are immutable — no deletes, and no user updates.
+      allow delete: if false;
+    }
+  }
+}
