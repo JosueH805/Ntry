@@ -58,3 +58,52 @@ GoogleService-Info.plist
 *.jks
 android/key.properties
 lib/firebase_options.dart
+# Flutter/Dart - additional
+.flutter-plugins
+flutter_export_environment.sh
+.packages
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/flutter_export_environment.sh
+ios/Flutter/Generated.xcconfig
+ios/Runner/GeneratedPluginRegistrant.*
+
+# Android
+android/.gradle/
+android/local.properties
+android/gradle/
+android/gradlew
+android/gradlew.bat
+
+# Secrets & credentials
+*.p8
+*.p12
+*.cer
+*.mobileprovision
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/.env*
+secrets/
+**/secrets/
+**/*secret*
+**/*credentials*
+
+# Crashlytics
+crashlytics-build.properties
+
+# Generated files
+*.g.dart
+*.freezed.dart
+*.mocks.dart
+
+# M5Stack / firmware secrets
+ntry_edge/src/secrets.h
+ntry_edge/src/secrets.py
+firmware/secrets.py
+
+# Firebase functions environment
+functions/.env
+functions/.env.*
+.firebaserc  # optional - contains project ID, some prefer to keep this private
