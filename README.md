@@ -25,4 +25,3 @@ Built by a team of 4 Software Engineering students at California Baptist Univers
 
 ## Notes
 Firebase credentials and API keys are excluded from this repository for security. 
-Contact the repository owner for setup instructions.
